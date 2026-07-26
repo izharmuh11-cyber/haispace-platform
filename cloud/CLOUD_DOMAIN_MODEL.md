@@ -1,6 +1,7 @@
 # Cloud Domain Model — Haispace Cloud
 
-**Status:** Draft v1.0
+**Status:** Final ✅
+**Versi:** 1.1 (frozen after this review)
 **Milestone:** 3 — Cloud Contract
 **Penulis:** GPT (Chief Product Architect) + Antigravity (Lead Software Architect)
 **Tanggal:** 2026-07-26
@@ -11,64 +12,94 @@
 
 > **Cloud stores facts. Runtime executes behavior.**
 
-Cloud tidak memiliki state machine booth.
-Cloud tidak pernah menentukan langkah berikutnya dalam sebuah session.
-Cloud hanya mengetahui fakta yang dikirim oleh Runtime.
-
-Konsekuensi langsung dari prinsip ini:
-
-- Tidak ada `WorkflowStage`, `AppState`, atau actor di Cloud
-- Cloud tidak bisa "membatalkan" atau "mengubah" session yang sedang berjalan
-- Recovery selalu berasal dari snapshot lokal — bukan dari Cloud
+- Cloud tidak memiliki state machine booth
+- Cloud tidak pernah menentukan langkah berikutnya dalam sebuah session
+- Cloud hanya mengetahui fakta yang dikirim oleh Runtime
 - Jika Cloud mati selama 24 jam, Runtime tetap berjalan normal
 
 ---
 
-## Aggregate Roots
+## SessionSnapshot vs SessionArchive
 
-Cloud hanya memiliki delapan Aggregate Root. Semua entity lain berada di bawahnya.
+Dua konsep ini harus dibedakan secara eksplisit.
+
+| Konsep | Lapisan | Pemilik | Tujuan |
+|---|---|---|---|
+| `SessionSnapshot` | **Transport Contract** | Runtime | Payload teknis yang dikirim Runtime ke Cloud |
+| `SessionArchive` | **Domain Entity** | Cloud | Model domain hasil ingest dari Snapshot |
 
 ```
-Organization
-    └── Event
-    └── Booth
-    └── Operator
-
-Booth
-    └── DeviceRegistration
-
-Event
-    └── Manifest
-    └── Package
-
-Manifest
-    └── Asset (referensi)
-
-Asset (berdiri sendiri)
-
+Runtime (iPad)
+    │
+    │  SessionSnapshot
+    │  (transport payload — format teknis)
+    ▼
+Cloud Ingestion Layer
+    │
+    │  validasi, transform, enrich
+    ▼
 SessionArchive
-    └── DomainEventRecord
-    └── CaptureSummary
-    └── DeliverySummary
-    └── PaymentRecord
-    └── AuditSummary
-
-AuditEvent (append-only)
+    (domain entity — bahasa bisnis Cloud)
 ```
+
+**Implikasi:**
+- Cloud **tidak menyimpan** SessionSnapshot sebagai domain utama
+- Jika format SessionSnapshot berubah (schema bump), Cloud Ingestion Layer yang mengabsorb perubahan itu — bukan SessionArchive
+- SessionArchive adalah kontrak domain yang stabil; SessionSnapshot adalah kontrak teknis yang boleh berkembang
+
+---
+
+## Identity Rules
+
+> **Identity tidak pernah berubah selama lifecycle entity.**
+
+| Aggregate | Identity Key | Di-generate oleh | Format |
+|---|---|---|---|
+| `Organization` | `organizationId` | Cloud (Admin) | UUID v4 |
+| `Event` | `eventId` | Cloud (Admin) | UUID v4 |
+| `Booth` | `boothId` | Cloud (Admin) | UUID v4 |
+| `DeviceRegistration` | `deviceId` | Runtime (self-register) | UUID v4 |
+| `Operator` | `operatorId` | Cloud (Admin) | UUID v4 |
+| `Manifest` | `manifestId` | Cloud (Admin) | UUID v4 |
+| `Asset` | `assetId` | Cloud (Admin) | UUID v4 |
+| `Package` | `packageId` | Cloud (Admin) | UUID v4 |
+| `SessionArchive` | `sessionId` | **Runtime** | UUID v4 (dari Aggregate) |
+| `DomainEventRecord` | `eventId` | **Runtime** | UUID v4 (dari Envelope) |
+| `AuditEvent` | `auditId` | Cloud | UUID v4 |
+
+**Catatan penting:** `sessionId` dan `eventId` di-generate oleh Runtime dan diterima Cloud apa adanya. Cloud **tidak pernah** mengubah atau mengganti identity yang berasal dari Runtime.
+
+---
+
+## Referential Integrity Rules
+
+| Rule | Keterangan |
+|---|---|
+| `Booth` ∈ tepat satu `Organization` | Booth tidak bisa berpindah organisasi |
+| `Event` ∈ tepat satu `Organization` | Event tidak bisa berpindah organisasi |
+| `Package` ∈ tepat satu `Event` | Package tidak shared antar event |
+| `Manifest` ∈ tepat satu `Event` | Manifest tidak shared antar event |
+| `Asset` ∈ banyak `Manifest` | Asset bisa dipakai di banyak manifest |
+| `DeviceRegistration` ∈ tepat satu `Booth` | Device tidak bisa dipakai dua booth bersamaan |
+| `SessionArchive.manifestVersion` → harus ada di `Manifest` yang valid | Tidak boleh archive session dengan manifest yang tidak dikenal |
+| `SessionArchive.boothId` → harus `Booth` yang terdaftar | Tidak boleh archive dari booth yang tidak dikenal |
+| `SessionArchive.eventId` → harus `Event` yang `active` atau `completed` | Tidak boleh archive ke event yang masih `draft` |
+| `DomainEventRecord.sessionId` → harus ada di `SessionArchive` | Event tanpa session diabaikan |
+| `AuditEvent.boothId` (nullable) → jika ada, harus booth yang terdaftar | |
 
 ---
 
 ## Ownership Table
 
-> Tidak boleh ada dua Source of Truth untuk satu entitas yang sama.
+> Tidak boleh ada dua Source of Truth untuk satu entitas.
 
 | Entity | Owner | Writable By | Readable By | Source of Truth |
 |---|---|---|---|---|
 | `Organization` | Cloud | Admin | Cloud | Cloud |
 | `Event` | Cloud | Admin | Runtime + Cloud | Cloud |
 | `Booth` | Cloud | Admin | Runtime + Cloud | Cloud |
-| `DeviceRegistration` | Cloud | Runtime (self-register) + Admin | Runtime + Cloud | Cloud |
-| `Operator` | Cloud | Admin | Runtime + Cloud | Cloud |
+| `DeviceRegistration` | Cloud | Runtime (self) + Admin | Runtime + Cloud | Cloud |
+| `Operator` | Cloud | Admin | Cloud | Cloud |
 | `Manifest` | Cloud | Admin | Runtime | Cloud |
 | `Asset` | Cloud | Admin | Runtime | Cloud |
 | `Package` | Cloud | Admin | Runtime | Cloud |
@@ -76,341 +107,384 @@ AuditEvent (append-only)
 | `DomainEventRecord` | **Runtime** | Runtime | Cloud | **Runtime** |
 | `AuditEvent` | **Runtime** | Runtime | Cloud | **Runtime** |
 
-**Interpretasi:**
-- Entity milik Cloud → Cloud dapat membuat, mengubah, dan menghapusnya
-- Entity milik Runtime → Cloud hanya menerima dan menyimpan. Cloud tidak boleh mengubahnya.
+---
+
+## Aggregate Detail
 
 ---
 
-## 1. Organization
+### 1. Organization
 
-Pemilik seluruh hierarki data. Satu organisasi dapat mengelola banyak event.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `name` | String | Mutable |
+| `plan` | Enum (starter\|professional\|enterprise) | Mutable |
+| `status` | Enum (active\|suspended\|terminated) | Mutable |
+
+**Lifecycle:**
 ```
-Organization
-    organizationId      UUID — permanen
-    name                String
-    plan                Enum (starter | professional | enterprise)
-    createdAt           Timestamp (immutable)
-    status              Enum (active | suspended | terminated)
+Created → Active → Suspended → Terminated
 ```
+Tidak pernah dihapus secara fisik.
 
-**Lifecycle:** Dibuat oleh Admin. Tidak pernah dihapus — hanya di-suspend.
+**Invariants:**
+- `organizationId` unik di seluruh sistem
+- `status = terminated` bersifat final — tidak bisa kembali ke `active`
+- Minimal satu Operator harus ada dengan `role = owner`
 
 ---
 
-## 2. Event
+### 2. Event
 
-Satu sesi foto booth selalu terjadi dalam konteks sebuah Event (misalnya: "Wisuda BINUS 2026").
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `eventId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `name` | String | Mutable (saat `draft`) |
+| `venue` | String | Mutable (saat `draft`) |
+| `scheduledDate` | Date | Mutable (saat `draft`) |
+| `status` | Enum | Mutable |
+| `assignedBoothIds` | List\<UUID\> | Mutable (saat `draft` atau `active`) |
+| `activeManifestId` | UUID | Mutable (saat `active`) |
+
+**Lifecycle:**
 ```
-Event
-    eventId             UUID — permanen
-    organizationId      FK → Organization
-    name                String
-    venue               String
-    scheduledDate       Date
-    status              Enum (draft | active | completed | archived)
-    assignedBoothIds    List<boothId>
-    activeManifestId    FK → Manifest (versi manifest aktif saat ini)
-    createdAt           Timestamp (immutable)
-    updatedAt           Timestamp
+draft → active → completed → archived
 ```
+`draft`: belum ada session yang boleh dibuat.
+`active`: session dapat dibuat. Booth sudah di-assign.
+`completed`: event selesai. Tidak ada session baru.
+`archived`: data boleh dipindahkan ke cold storage.
 
-**Lifecycle:** Draft → Active (saat event dimulai) → Completed → Archived.
-
-**Aturan:** Satu booth bisa di-assign ke banyak event (berbeda tanggal). Satu event dapat punya banyak booth.
+**Invariants:**
+- `status` hanya bisa maju, tidak bisa mundur
+- `active` event harus memiliki minimal satu `Booth` dan satu `Manifest`
+- Booth tidak boleh di-unassign dari event yang sudah `active` jika ada session aktif pada booth tersebut
 
 ---
 
-## 3. Booth
+### 3. Booth
 
-Representasi fisik satu unit booth di Cloud. Booth bisa berganti device (iPad) tanpa kehilangan identitas.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `boothId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `name` | String | Mutable |
+| `status` | Enum (active\|inactive\|suspended) | Mutable |
+| `currentDeviceId` | UUID | Mutable (saat ganti device) |
+| `lastSeenAt` | Timestamp | Mutable (otomatis) |
+
+**Lifecycle:**
 ```
-Booth
-    boothId             UUID — permanen (sama dengan yang di Keychain iPad)
-    organizationId      FK → Organization
-    name                String (contoh: "Booth 01 — Utara")
-    status              Enum (active | inactive | suspended)
-    currentDeviceId     FK → DeviceRegistration (device yang sedang aktif)
-    createdAt           Timestamp (immutable)
-    lastSeenAt          Timestamp
+Created → Active → Inactive ⇄ Active → Suspended
 ```
+Tidak pernah dihapus secara fisik.
 
-**Lifecycle:** Dibuat oleh Admin. Dapat berganti device. Tidak pernah dihapus.
-
-**Perbedaan Booth vs DeviceRegistration:**
-- `Booth` = identitas logis (tempat, nama, history)
-- `DeviceRegistration` = identitas fisik (iPad tertentu, runtime version)
+**Invariants:**
+- Satu Booth hanya bisa memiliki satu `currentDeviceId` yang `active` pada satu waktu
+- Booth `suspended` tidak boleh menerima session baru
+- `boothId` tidak pernah berubah meski device berganti
 
 ---
 
-## 4. DeviceRegistration
+### 4. DeviceRegistration
 
-Merepresentasikan satu iPad yang terdaftar. Terpisah dari Booth karena iPad bisa diganti.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `deviceId` | UUID | **Immutable** |
+| `boothId` | UUID | **Immutable** |
+| `registeredAt` | Timestamp | **Immutable** |
+| `platform` | String | **Immutable** |
+| `deviceClass` | String | **Immutable** |
+| `publicKey` | String | **Immutable** |
+| `runtimeId` | String | **Immutable** |
+| `status` | Enum (active\|revoked) | Mutable |
+| `lastSeenAt` | Timestamp | Mutable |
+| `lastKnownDescriptor` | RuntimeDescriptorSnapshot | Mutable |
+
+**Lifecycle:**
 ```
-DeviceRegistration
-    deviceId            UUID — di-generate Runtime saat instalasi pertama
-    boothId             FK → Booth
-    platform            String ("iOS")
-    deviceClass         String ("Booth" | "Camera" | "Admin")
-    runtimeId           String ("booth-runtime-ios")
-    publicKey           String (RSA public key)
-    registeredAt        Timestamp (immutable)
-    lastSeenAt          Timestamp
-    status              Enum (active | revoked)
-
-    lastKnownDescriptor RuntimeDescriptorSnapshot
-        architectureVersion String
-        runtimeVersion      String
-        buildNumber         String
-        reportedAt          Timestamp
+Registered → Active → Revoked
 ```
+`revoked` bersifat final. Device baru harus register ulang dengan `deviceId` baru.
 
-**Lifecycle:** Dibuat oleh Runtime (self-register). Dapat di-revoke oleh Admin. Tidak pernah dihapus.
-
-**`lastKnownDescriptor`** bukan untuk kontrol — hanya untuk observability (Mission Control dapat melihat versi runtime setiap booth).
+**Invariants:**
+- Hanya satu `DeviceRegistration` dengan `status = active` per `Booth` pada satu waktu
+- `publicKey` tidak pernah diubah setelah registrasi
+- `lastKnownDescriptor` adalah observability — tidak digunakan untuk kontrol akses
 
 ---
 
-## 5. Operator
+### 5. Operator
 
-Pengguna manusia yang mengelola dan memantau booth.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `operatorId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `email` | String | **Immutable** (identity) |
+| `name` | String | Mutable |
+| `role` | Enum (owner\|manager\|staff) | Mutable (oleh owner) |
+| `permissions` | List\<Permission\> | Mutable |
+| `status` | Enum (active\|suspended) | Mutable |
+| `lastLoginAt` | Timestamp | Mutable |
+
+**Lifecycle:**
 ```
-Operator
-    operatorId          UUID — permanen
-    organizationId      FK → Organization
-    name                String
-    email               String (unique)
-    role                Enum (owner | manager | staff)
-    permissions         List<Permission>
-    status              Enum (active | suspended)
-    createdAt           Timestamp (immutable)
-    lastLoginAt         Timestamp
+Created → Active → Suspended → Active (dapat direaktivasi)
 ```
 
-**Lifecycle:** Dibuat oleh Admin. Tidak pernah dihapus — hanya di-suspend.
+**Invariants:**
+- Minimal satu operator `role = owner` per Organization harus selalu ada
+- Owner terakhir tidak bisa di-suspend tanpa memindahkan ownership terlebih dahulu
 
 ---
 
-## 6. Manifest
+### 6. Manifest
 
-Manifest adalah blueprint satu sesi foto: frame yang tersedia, filter, jumlah capture, dll.
-Manifest bersifat **immutable** — versi baru berarti object baru. Tidak pernah overwrite.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `manifestId` | UUID | **Immutable** |
+| `eventId` | UUID | **Immutable** |
+| `version` | Int | **Immutable** |
+| `publishedAt` | Timestamp | **Immutable** (setelah published) |
+| `createdAt` | Timestamp | **Immutable** |
+| `createdBy` | UUID | **Immutable** |
+| `status` | Enum (draft\|published\|superseded) | Mutable |
+| `packageIds` | List\<UUID\> | Mutable (saat `draft`) |
+| `assetRefs` | List\<ManifestAssetRef\> | Mutable (saat `draft`) |
+
+**Lifecycle:**
 ```
-Manifest
-    manifestId          UUID — permanen
-    eventId             FK → Event
-    version             Int (monotonically increasing, 1, 2, 3, ...)
-    status              Enum (draft | published | deprecated)
-    packageIds          List<FK → Package>
-    assetRefs           List<ManifestAssetRef>
-    publishedAt         Timestamp (immutable setelah published)
-    createdAt           Timestamp (immutable)
-    createdBy           FK → Operator
-
-ManifestAssetRef
-    assetId             FK → Asset
-    role                Enum (frame | filter | overlay | background | sticker)
-    displayOrder        Int
+draft → published → superseded
 ```
+Manifest tidak pernah dihapus. `superseded` ketika versi baru di-publish.
 
-**Lifecycle:** Draft → Published → Deprecated (ketika versi baru published).
-
-**Aturan:** Runtime selalu mendapatkan manifest versi terbaru yang berstatus `published`. Session yang sedang berjalan tidak pernah mendapat manifest baru (version pinning di Runtime).
+**Invariants:**
+- Manifest `published` tidak boleh diubah (semua fields immutable setelah published)
+- Satu Event hanya boleh memiliki satu Manifest `published` pada satu waktu
+- `version` selalu monotonically increasing per Event
+- Manifest `draft` tidak boleh digunakan oleh booth
 
 ---
 
-## 7. Asset
+### 7. Asset
 
-Asset adalah **metadata** dari sebuah file kreatif (frame, filter, overlay). File itu sendiri berada di object storage — bukan di Cloud domain.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `assetId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `uploadedBy` | UUID | **Immutable** |
+| `checksum` | String | **Immutable** |
+| `sizeBytes` | Int | **Immutable** |
+| `mimeType` | String | **Immutable** |
+| `storageLocation` | String | **Immutable** |
+| `type` | Enum | **Immutable** |
+| `name` | String | Mutable (display only) |
+| `status` | Enum (active\|deprecated\|deleted) | Mutable |
+
+**Lifecycle:**
 ```
-Asset
-    assetId             UUID — permanen
-    organizationId      FK → Organization
-    type                Enum (frame | filter | overlay | background | sticker | font)
-    name                String
-    checksum            String (SHA-256 dari file)
-    sizeBytes           Int
-    storageLocation     String (opaque reference ke object storage — bukan URL langsung)
-    mimeType            String
-    uploadedBy          FK → Operator
-    createdAt           Timestamp (immutable)
-    status              Enum (active | deprecated | deleted)
+Uploaded → Verified → Referenced → Archived
 ```
+`deleted` adalah logical delete — file di storage tidak langsung dihapus.
 
-**Lifecycle:** Dibuat saat upload. Tidak pernah diubah (immutable metadata). Jika file diganti, buat Asset baru.
-
-**Catatan:** `storageLocation` adalah referensi opaque — Cloud Service yang menghasilkan URL download, bukan Runtime.
+**Invariants:**
+- Asset dengan `status = referenced` (dipakai oleh Manifest `published`) tidak boleh dihapus
+- `checksum` digunakan Runtime untuk memvalidasi integritas file yang di-download
+- File yang sudah di-upload tidak pernah dimodifikasi — hanya bisa dibuat Asset baru
 
 ---
 
-## 8. Package
+### 8. Package
 
-Paket yang ditawarkan kepada tamu (misalnya: "3 Foto Rp 35.000").
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `packageId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `createdAt` | Timestamp | **Immutable** |
+| `priceAmount` | Int | **Immutable** (historical integrity) |
+| `priceCurrency` | String | **Immutable** |
+| `captureLimit` | Int | **Immutable** |
+| `selectionLimit` | Int | **Immutable** |
+| `name` | String | Mutable |
+| `deliveryMethods` | List\<Enum\> | Mutable (saat `active`) |
+| `status` | Enum (active\|discontinued) | Mutable |
+| `discontinuedAt` | Timestamp | Mutable (set sekali) |
+
+**Lifecycle:**
 ```
-Package
-    packageId           UUID — permanen
-    organizationId      FK → Organization
-    name                String
-    captureLimit        Int
-    selectionLimit      Int
-    priceAmount         Int (dalam satuan terkecil, contoh: sen)
-    priceCurrency       String (ISO 4217, contoh: "IDR")
-    deliveryMethods     List<Enum (digital | print | both)>
-    status              Enum (active | discontinued)
-    createdAt           Timestamp (immutable)
-    discontinuedAt      Timestamp (null jika masih aktif)
+Created → Active → Discontinued
 ```
+`discontinued` bersifat final untuk session baru. Session lama yang menggunakan package ini tetap valid.
 
-**Lifecycle:** Dibuat oleh Admin. Jika discontinued, session lama yang menggunakan package ini tetap valid — hanya session baru yang tidak bisa menggunakannya.
+**Invariants:**
+- `priceAmount` tidak boleh diubah setelah ada `SessionArchive` yang menggunakannya
+- Package `discontinued` tidak boleh dipakai untuk session baru
+- `captureLimit` dan `selectionLimit` tidak boleh diubah (berdampak pada session yang sedang berjalan)
 
 ---
 
-## 9. SessionArchive
+### 9. SessionArchive
 
-> **SessionArchive bukan Session Runtime.**
+> **SessionArchive ≠ Session Runtime.**
+> SessionArchive adalah hasil ingest dari `SessionSnapshot`. Ia adalah representasi domain Cloud dari fakta yang sudah terjadi.
 
-Session Runtime hidup di iPad — memiliki state machine, actor, workflow. Cloud tidak tahu itu semua.
-SessionArchive adalah **snapshot akhir** dari sebuah session yang sudah selesai atau yang perlu di-backup untuk recovery.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `sessionId` | UUID (dari Runtime) | **Immutable** |
+| `boothId` | UUID | **Immutable** |
+| `eventId` | UUID | **Immutable** |
+| `manifestVersion` | Int | **Immutable** |
+| `packageId` | UUID | **Immutable** |
+| `runtimeVersion` | String | **Immutable** |
+| `architectureVersion` | String | **Immutable** |
+| `snapshotVersion` | Int | **Immutable** |
+| `startedAt` | Timestamp | **Immutable** |
+| `guest.name` | String | **Immutable** |
+| `guest.queueNumber` | Int | **Immutable** |
+| `payment` | PaymentRecord | **Immutable** (setelah ingest) |
+| `completedAt` | Timestamp | Mutable (null → set saat complete) |
+| `archiveStatus` | Enum | Mutable |
+| `captureSummary` | CaptureSummary | Mutable (update by Runtime) |
+| `deliverySummary` | DeliverySummary | Mutable (update by Runtime) |
+| `auditSummary` | AuditSummary | Mutable (update by Runtime) |
+
+**`archiveStatus` lifecycle:**
 ```
-SessionArchive
-    sessionId           UUID — berasal dari Runtime (immutable)
-    boothId             FK → Booth
-    eventId             FK → Event
-    manifestVersion     Int (versi manifest yang dipakai saat session)
-    packageId           FK → Package
-    runtimeVersion      String
-    architectureVersion String
-    snapshotVersion     Int (schema version dari SessionSnapshot)
-    startedAt           Timestamp (immutable)
-    completedAt         Timestamp (null jika belum selesai)
-    archiveStatus       Enum (in_progress | completed | recovered | abandoned)
-
-    guest               GuestInfo
-        name            String
-        queueNumber     Int
-
-    payment             PaymentRecord (null jika belum bayar)
-        localTransactionId  String
-        amount          Int
-        currency        String
-        method          String
-        acceptedAt      Timestamp
-
-    captureSummary      CaptureSummary
-        totalCaptured   Int
-        selectedCount   Int
-
-    deliverySummary     DeliverySummary (null jika belum delivery)
-        method          String
-        status          Enum (queued | completed | failed)
-        completedAt     Timestamp
-
-    auditSummary        AuditSummary
-        eventCount      Int
-        lastEventAt     Timestamp
+in_progress → completed
+           → recovered (jika ada recovery dari crash)
+           → abandoned (jika session tidak pernah selesai)
 ```
 
-**Tidak ada di SessionArchive:**
-- `currentStage` — sudah selesai, tidak ada stage
-- `WorkflowTimer` — Runtime concern
-- `actor state` — Runtime concern
-- logic apapun
+**Lifecycle:**
+```
+Ingested (snapshot pertama diterima)
+    ↓
+Verified (data valid, referential integrity OK)
+    ↓
+Archived (session selesai, completedAt di-set)
+```
 
-**Lifecycle:** Dibuat/diperbarui oleh Runtime via upload. Setelah `completed`, tidak boleh diubah kecuali oleh proses recovery.
+**Invariants:**
+- `sessionId` unik di seluruh Cloud
+- `completedAt >= startedAt` jika `completedAt` tidak null
+- `manifestVersion` wajib ada dan harus cocok dengan Manifest yang terdaftar di Event
+- `payment` wajib immutable setelah pertama kali di-ingest (tidak boleh di-overwrite)
+- `DomainEventRecord` untuk session ini bersifat append-only
+- `archiveStatus` hanya bisa maju ke `completed`, `recovered`, atau `abandoned` — tidak bisa kembali ke `in_progress`
 
 ---
 
-## 10. DomainEventRecord
+### 10. DomainEventRecord
 
-Cloud menyimpan setiap DomainEvent yang dikirim Runtime sebagai record yang immutable.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `eventId` | UUID (dari Runtime) | **Immutable** |
+| `sessionId` | UUID | **Immutable** |
+| `boothId` | UUID | **Immutable** |
+| `sequenceNumber` | Int | **Immutable** |
+| `eventType` | String | **Immutable** |
+| `correlationId` | String | **Immutable** |
+| `causationId` | String (nullable) | **Immutable** |
+| `runtimeVersion` | String | **Immutable** |
+| `occurredAt` | Timestamp | **Immutable** |
+| `receivedAt` | Timestamp | **Immutable** |
+| `payload` | JSON | **Immutable** |
+
+Semua fields **immutable**. Append-only. Tidak ada update.
+
+**Lifecycle:**
 ```
-DomainEventRecord
-    eventId             UUID (dari DomainEventEnvelope — immutable)
-    sessionId           FK → SessionArchive
-    boothId             FK → Booth
-    sequenceNumber      Int (urutan dalam session ini)
-    eventType           String (nama event, contoh: "PaymentAccepted")
-    correlationId       String (dari envelope)
-    causationId         String (dari envelope, nullable)
-    runtimeVersion      String
-    occurredAt          Timestamp (dari envelope — waktu terjadi di Runtime)
-    receivedAt          Timestamp (waktu diterima Cloud)
-    payload             JSON (konten event — immutable)
+Received → Stored
 ```
+Tidak ada state lain. Record yang sudah tersimpan tidak pernah berubah.
 
-**Events yang disimpan:**
-
-| Event | Keterangan |
-|---|---|
-| `PaymentAccepted` | Payment dikonfirmasi Runtime |
-| `CaptureAdded` | Satu foto ditambahkan |
-| `PhotoSelected` | Tamu memilih foto |
-| `DeliveryQueued` | Delivery dimulai |
-| `DeliveryCompleted` | Delivery selesai |
-| `DeliveryFailed` | Delivery gagal |
-| `SessionCompleted` | Session selesai normal |
-| `SessionAbandoned` | Session ditinggalkan |
-| `RecoveryInitiated` | Session di-recover dari snapshot |
-
-**Lifecycle:** Append-only. Tidak pernah diubah atau dihapus.
-
-**Idempotency:** Cloud mengabaikan event dengan `eventId` yang sudah ada.
+**Invariants:**
+- `eventId` unik di seluruh sistem (idempotency: duplicate `eventId` diabaikan)
+- `sequenceNumber` monotonically increasing per `sessionId`
+- `occurredAt` tidak boleh di masa depan
+- `payload` tidak boleh di-modify setelah disimpan
 
 ---
 
-## 11. AuditEvent
+### 11. AuditEvent
 
-Catatan audit operasional — lebih detail dari DomainEventRecord, mencakup tindakan operator dan sistem.
+**Fields:**
 
+| Field | Type | Mutability |
+|---|---|---|
+| `auditId` | UUID | **Immutable** |
+| `organizationId` | UUID | **Immutable** |
+| `boothId` | UUID (nullable) | **Immutable** |
+| `operatorId` | UUID (nullable) | **Immutable** |
+| `sessionId` | UUID (nullable) | **Immutable** |
+| `category` | Enum | **Immutable** |
+| `action` | String | **Immutable** |
+| `outcome` | Enum (success\|failure\|warning) | **Immutable** |
+| `metadata` | JSON | **Immutable** |
+| `occurredAt` | Timestamp | **Immutable** |
+| `receivedAt` | Timestamp | **Immutable** |
+
+Semua fields **immutable**. Append-only. Tidak ada update atau delete.
+
+**Lifecycle:**
 ```
-AuditEvent
-    auditId             UUID
-    organizationId      FK → Organization
-    boothId             FK → Booth (nullable)
-    operatorId          FK → Operator (nullable)
-    sessionId           FK → SessionArchive (nullable)
-    category            Enum (session | payment | delivery | manifest | device | operator | system)
-    action              String (contoh: "session.created", "payment.accepted")
-    outcome             Enum (success | failure | warning)
-    metadata            JSON (konteks tambahan)
-    occurredAt          Timestamp (waktu terjadi di Runtime)
-    receivedAt          Timestamp (waktu diterima Cloud)
+Received → Stored (permanent)
 ```
 
-**Lifecycle:** Append-only. Tidak pernah diubah. Retensi: **7 tahun** (kebutuhan compliance).
+**Invariants:**
+- Tidak pernah dihapus
+- `occurredAt` tidak boleh di masa depan
+- Retensi minimum 7 tahun (compliance keuangan)
 
 ---
 
-## 12. Analytics (Projection — Bukan Aggregate)
+## Analytics — Projection Only
 
 > **Analytics bukan Aggregate. Analytics adalah projection.**
 
-Semua dashboard — Operator Dashboard, Mission Control, Revenue Report, Printer Health, Live Sessions — dibangun dari **projection** data di atas. Bukan dari Session Runtime secara langsung.
+Semua dashboard dibangun dari projection — bukan dari data domain secara langsung.
 
-Contoh projection:
-
-```
-DailySessionSummary     → dibangun dari SessionArchive + DomainEventRecord
-RevenueByEvent          → dibangun dari PaymentRecord dalam SessionArchive
-DeliverySuccessRate     → dibangun dari DeliverySummary
-ManifestUsageStats      → dibangun dari manifestVersion dalam SessionArchive
-BoothHealthSummary      → dibangun dari DeviceRegistration.lastSeenAt + AuditEvent
-```
+| Projection | Dibangun Dari |
+|---|---|
+| `DailySessionSummary` | `SessionArchive` + `DomainEventRecord` |
+| `RevenueByEvent` | `PaymentRecord` dalam `SessionArchive` |
+| `DeliverySuccessRate` | `DeliverySummary` dalam `SessionArchive` |
+| `ManifestUsageStats` | `manifestVersion` dalam `SessionArchive` |
+| `BoothHealthSummary` | `DeviceRegistration.lastSeenAt` + `AuditEvent` |
+| `LiveSessionCount` | `SessionArchive` dengan `archiveStatus = in_progress` |
+| `OperatorActivityLog` | `AuditEvent` dengan `operatorId != null` |
 
 **Aturan:**
 - Projection boleh di-regenerate kapan saja dari data domain
-- Projection tidak menjadi source of truth
-- Perubahan business logic di domain otomatis mempengaruhi projection saat di-regenerate
+- Projection tidak pernah menjadi source of truth
+- Perubahan business logic di domain otomatis terabsorb saat projection di-regenerate
 
 ---
 
@@ -424,9 +498,12 @@ Organization
     └── 1..* Asset
 
 Event
-    ├── 1..* Manifest (versi)
+    ├── 1..* Manifest (versi immutable)
     ├── 1..* Package
-    └── *..* Booth (assignment)
+    └── *..* Booth (assignment per event)
+
+Manifest
+    └── *..* Asset (via ManifestAssetRef)
 
 Booth
     ├── 1..* DeviceRegistration (history perangkat)
@@ -435,9 +512,9 @@ Booth
 SessionArchive
     ├── 1  Booth
     ├── 1  Event
-    ├── 1  Manifest (version pinned)
-    ├── 1  Package
-    └── 1..* DomainEventRecord
+    ├── 1  Manifest (version pinned, immutable)
+    ├── 1  Package (immutable)
+    └── 1..* DomainEventRecord (append-only)
 
 AuditEvent
     ├── 0..1 Booth
@@ -454,10 +531,10 @@ AuditEvent
 | `SessionArchive` | 2 tahun | Kebutuhan operasional dan sengketa |
 | `DomainEventRecord` | 2 tahun | Bersamaan dengan SessionArchive |
 | `AuditEvent` | **7 tahun** | Compliance keuangan |
-| `Manifest` | Sesuai event | Dihapus bersama event ketika di-archive |
-| `Asset` | Sesuai paket event | Dapat di-purge setelah event selesai |
-| `DeviceRegistration` | Selama Booth aktif + 1 tahun | Untuk forensik jika ada insiden |
-| Analytics Projection | Dapat di-regenerate | Tidak ada retensi — bisa dibuat ulang |
+| `Manifest` | Sesuai event + 1 tahun | Dibutuhkan untuk verifikasi archive lama |
+| `Asset` | Sesuai paket event | Dapat di-purge setelah event diarsipkan |
+| `DeviceRegistration` | Selama Booth aktif + 1 tahun | Forensik jika ada insiden keamanan |
+| Analytics Projection | Dapat di-regenerate | Tidak ada retensi tetap |
 | Application Logs | 90 hari | Debugging operasional |
 
 ---
@@ -465,29 +542,26 @@ AuditEvent
 ## Out of Scope
 
 Dokumen ini tidak membahas:
-
-- REST API, endpoint, HTTP method
-- Authentication, API key, token
-- Database, ORM, SQL, PostgreSQL, Redis
-- Object storage vendor (S3, GCS, R2)
-- Message queue, WebSocket
-- Framework backend (Rails, FastAPI, NestJS, dll.)
-- Deployment, infra, Kubernetes
-
-Semua hal di atas akan dibahas di `CLOUD_RESOURCES.md`, `CLOUD_CONTRACT.md`, dan ADR implementation.
+REST API, endpoint, HTTP method, authentication, token, database, ORM, SQL, object storage vendor, message queue, WebSocket, framework backend.
 
 ---
 
-## Acceptance Criteria (dari GPT)
+## Acceptance Criteria (Final)
 
-- [x] Setiap entity memiliki satu **Owner** dan satu **Source of Truth** yang jelas
+- [x] Setiap entity memiliki satu Owner dan satu Source of Truth yang jelas
 - [x] Tidak ada workflow atau state machine Runtime yang berpindah ke Cloud
 - [x] Semua relasi antar aggregate terdokumentasi
-- [x] Seluruh data dapat dipetakan ke Runtime tanpa kepemilikan ganda
-- [x] Analytics dan dashboard diposisikan sebagai **projection**, bukan domain utama
-- [x] Dokumen tetap netral terhadap implementasi backend
+- [x] Tidak ada kepemilikan ganda
+- [x] Analytics diposisikan sebagai projection, bukan domain utama
+- [x] Netral terhadap implementasi backend
+- [x] `SessionSnapshot` (transport) dipisahkan dari `SessionArchive` (domain)
+- [x] Identity rules terdokumentasi per aggregate
+- [x] Referential integrity rules terdokumentasi
+- [x] Immutable vs mutable fields jelas per entity
+- [x] Lifecycle domain setiap aggregate terdokumentasi
+- [x] Invariant utama setiap aggregate tertulis eksplisit
 
 ---
 
-*CLOUD_DOMAIN_MODEL.md v1.0 — Milestone 3 Cloud Contract*
+*CLOUD_DOMAIN_MODEL.md v1.1 — FINAL*
 *Ref: constitution/PLATFORM_RUNTIME_V1.md, cloud/SYNC_STRATEGY.md, cloud/AUTHENTICATION.md, cloud/ERROR_MODEL.md*
