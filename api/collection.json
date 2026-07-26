@@ -1,0 +1,244 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-07-26T15:00:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "wrk_1",
+      "parentId": null,
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "name": "Haispace Runtime Validations",
+      "description": "Validation suite for iPad Runtime -> Mission Control v1.0.0-rc1",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_1",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:3000",
+        "device_id": "SIM-IPAD-PRO-1",
+        "booth_id": "bth_123",
+        "api_key": "YOUR_API_KEY_HERE"
+      },
+      "dataPropertyOrder": {
+        "&": ["base_url", "device_id", "booth_id", "api_key"]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1785054158000,
+      "_type": "environment"
+    },
+    {
+      "_id": "req_1",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/runtime/capabilities",
+      "name": "1. Runtime Capabilities",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1785054158000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_2",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/runtime/time",
+      "name": "2. Clock Sync",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": -1785054157000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_3",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/devices",
+      "name": "3. Register Device",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"deviceId\": \"{{ _.device_id }}\",\n  \"boothId\": \"{{ _.booth_id }}\",\n  \"platform\": \"ios\",\n  \"deviceClass\": \"ipad-simulator\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054156000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_4",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/devices/{{ _.device_id }}/descriptor",
+      "name": "4. Heartbeat (Descriptor)",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"runtimeVersion\": \"1.0.0-rc1\",\n  \"manifestVersion\": \"man_123\",\n  \"batteryLevel\": 98,\n  \"storageFree\": 50000000000,\n  \"networkType\": \"wifi\",\n  \"pendingUploads\": 0,\n  \"state\": \"ready\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-booth-api-key", "value": "{{ _.api_key }}" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054155000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_5",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/runtime/manifest",
+      "name": "5. Download Manifest",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        { "name": "x-booth-api-key", "value": "{{ _.api_key }}" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054154000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_6",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/sessions",
+      "name": "6. Session Upload",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"sessionId\": \"ses_123456\",\n  \"eventId\": \"evt_123\",\n  \"boothId\": \"{{ _.booth_id }}\",\n  \"manifestId\": \"man_123\",\n  \"state\": \"completed\",\n  \"startedAt\": \"2026-07-26T14:00:00.000Z\",\n  \"completedAt\": \"2026-07-26T14:05:00.000Z\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-booth-api-key", "value": "{{ _.api_key }}" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054153000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_7",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/session-events",
+      "name": "7. Session Events Upload",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"events\": [\n    {\n      \"eventId\": \"sev_123\",\n      \"sessionId\": \"ses_123456\",\n      \"eventType\": \"capture_start\",\n      \"payload\": {},\n      \"timestamp\": \"2026-07-26T14:01:00.000Z\"\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-booth-api-key", "value": "{{ _.api_key }}" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054152000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_8",
+      "parentId": "wrk_1",
+      "modified": 1785054158000,
+      "created": 1785054158000,
+      "url": "{{ _.base_url }}/v1/audit-events",
+      "name": "8. Audit Events Upload",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"events\": [\n    {\n      \"auditId\": \"aud_123\",\n      \"boothId\": \"{{ _.booth_id }}\",\n      \"category\": \"hardware\",\n      \"action\": \"camera_connect\",\n      \"outcome\": \"success\",\n      \"timestamp\": \"2026-07-26T13:50:00.000Z\"\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "x-booth-api-key", "value": "{{ _.api_key }}" }
+      ],
+      "authentication": {},
+      "metaSortKey": -1785054151000,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    }
+  ]
+}
