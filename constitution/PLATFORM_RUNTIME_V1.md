@@ -13,6 +13,34 @@
 
 ---
 
+## Architecture Freeze ≠ Product Freeze
+
+> **Yang dibekukan adalah kontrak. Bukan produk.**
+
+Ini adalah perbedaan yang sangat penting.
+
+**Yang dibekukan (Architecture Freeze):**
+- Kontrak dan protocol signatures
+- Dependency direction antar layer
+- Ownership boundary (siapa yang berhak membuat Session, dll.)
+- Runtime Guarantees
+- Domain event language
+- Aggregate boundaries
+
+**Yang TIDAK dibekukan (Product dapat berkembang bebas):**
+- Workflow dan stage transitions
+- Package model dan pricing
+- Payment provider (QRIS, Midtrans, Xendit, ...)
+- Editing capability (filter baru, AI enhancement)
+- Cloud feature dan sync strategy
+- AI capability
+- Operator experience dan UI
+- Admin dashboard
+
+Artinya: Platform dapat berkembang cepat menambah fitur baru tanpa menggeser fondasi.
+
+---
+
 ## Arti Kata "Frozen"
 
 > Tidak ada perubahan yang boleh dilakukan terhadap Platform Contract tanpa ADR baru yang disetujui oleh Architecture Review.
@@ -187,6 +215,65 @@ Admin Platform (Milestone 7)
 - `SessionSnapshot` schema fields
 - `RuntimeContainer.build(for:)` factory signature
 - `DomainEventEnvelope` fields
+
+---
+
+## Non Goals of Platform Runtime v1.0
+
+Runtime v1.0 **tidak bertanggung jawab atas** hal-hal berikut. Jika ada permintaan untuk menambahkan ini ke dalam Runtime, itu adalah scope creep:
+
+| Bukan Tanggung Jawab Runtime | Tanggung Jawab Siapa? |
+|---|---|
+| Business analytics & funnel reporting | Analytics Service (Milestone F+) |
+| AI recommendation & auto-framing | AI Capability (Milestone E+) |
+| Cloud reporting & dashboard | Cloud Contract (Milestone 5) |
+| Operator dashboard UI & UX | Operator Platform (Milestone 6) |
+| Admin CMS & asset management | Admin Platform (Milestone 7) |
+| Pricing strategy & package configuration | Product Layer (bukan Runtime) |
+| Payment gateway selection per merchant | CapabilityManager Policy (Milestone 3) |
+| Guest notification (WhatsApp, Email) | Delivery Capability (bukan core Runtime) |
+
+---
+
+## Change Budget
+
+Setiap jenis perubahan memiliki "biaya governance" yang berbeda. Gunakan tabel ini sebelum memutuskan apakah perubahan perlu ADR.
+
+| Jenis Perubahan | Biaya Governance |
+|---|---|
+| Perubahan `SessionDomainEvent` cases | Major ADR + Architecture Review + AAT baru |
+| Perubahan `SessionSnapshot` schema | Major ADR + Architecture Review + Migration script |
+| Perubahan `RuntimeGuarantee` list | Major ADR + Architecture Review + AAT update |
+| Perubahan protocol signature di Platform Contract | Major ADR + Architecture Review |
+| Penambahan `RuntimeModule` baru | Minor ADR + Architecture Review |
+| Penambahan Subscriber baru ke Publisher | Tidak perlu ADR — cukup PR review |
+| Penambahan Capability baru ke CapabilityModule | Tidak perlu ADR — cukup PR review |
+| Perubahan UI / Workflow logic | Tidak perlu ADR |
+| Bug fix tanpa interface change | Tidak perlu ADR |
+
+> Prinsip: Semakin banyak komponen yang tergantung pada sesuatu, semakin besar biaya governance untuk mengubahnya.
+
+---
+
+## Governance
+
+**Siapa yang bisa mengusulkan perubahan Platform Contract?**
+- Lead Software Architect (Antigravity) → mengusulkan ADR baru
+- Chief Product Architect (GPT) → menyetujui atau menolak ADR
+
+**Apa yang boleh berubah tanpa ADR?**
+- Implementasi internal module (selama interface contract tidak berubah)
+- Penambahan subscriber baru ke DomainEventPublisher
+- Penambahan Capability baru ke CapabilityModule
+- Bug fixes yang tidak mengubah interface publik
+
+**Apa yang TIDAK boleh berubah tanpa ADR?**
+- Protocol signatures (`SessionRepositoryProtocol`, `CapabilityManagerProtocol`, dll.)
+- `SessionDomainEvent` enum cases
+- `SessionSnapshot` schema fields
+- `RuntimeContainer.build(for:)` factory signature
+- `DomainEventEnvelope` fields
+- `RuntimeDescriptor.architectureVersion`
 
 ---
 
