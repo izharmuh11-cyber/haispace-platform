@@ -12,6 +12,27 @@ Migrasikan seluruh state management `HaispaceBooths` dari empat `@Observable` st
 
 ---
 
+## 📊 Compatibility Coverage — Current Status
+
+> Metrik ini diperbarui setiap PR selesai.
+> Target akhir: **0 mismatch selama 2 minggu berturut-turut** sebelum Legacy Store aman dihapus.
+
+```
+Bounded Context   Coverage            Status
+──────────────────────────────────────────────────────────────
+Payment           ████░░░░░░  40%     PR-01 ✅  PR-02 ✅  PR-03 ⏳  PR-04 ⏳
+Capture           ░░░░░░░░░░   0%     PR-05 ⏳  PR-06 ⏳  PR-07 ⏳  PR-08 ⏳
+Delivery          ░░░░░░░░░░   0%     PR-09 ⏳  PR-10 ⏳  PR-11 ⏳  PR-12 ⏳
+Session Root      ░░░░░░░░░░   0%     PR-13 ⏳  PR-14 ⏳  PR-15 ⏳
+```
+
+**Legenda Coverage:**
+- `40%` = Shadow Write + Divergence Detection aktif, belum Read Switch
+- `70%` = Read Switch aktif (Aggregate jadi primary read)
+- `100%` = Legacy Store dihapus (sepenuhnya clean)
+
+---
+
 ## 🔄 4-Step Compatibility Window Pattern
 
 Untuk setiap bounded context (Payment, Capture, Delivery, Session), migrasi dilakukan dengan 4 tahap terkontrol:
@@ -38,8 +59,8 @@ Phase B.1 (Payment)    ──►  Phase B.2 (Capture)    ──►  Phase B.3 (D
 
 | PR | Judul | Target Impact | Status |
 |---|---|---|---|
-| **PR-01** | **Payment Shadow Write & SessionFactory** | • Buat `SessionFactory`<br>• Enriched `PaymentCommitment` domain metadata<br>• `Workflow.confirmPayment` → `Session.acceptPayment()` → `SessionRepository.save()` → `PaymentStore` update | 🔄 In Progress |
-| **PR-02** | **Payment Read Compare & Audit** | • SwiftUI Payment View membaca dari `SessionAggregate`<br>• Komparasi dengan `PaymentStore.status`<br>• Telemetry warning jika berbeda | ⏳ Pending |
+| **PR-01** | **Payment Shadow Write & SessionFactory** | • Buat `SessionFactory` (create/restore/migrate stubs)<br>• Enriched `PaymentCommitment` + `PaymentMetadata`<br>• `Workflow.confirmPayment` → `Session.acceptPayment()` → `SessionRepository.save()` + Legacy update | ✅ Done |
+| **PR-02** | **Payment Read Compare + Divergence Detection** | • `PaymentCompatibilityChecker` (5 fields + timestamp delta)<br>• `CompatibilityEvent.matched/mismatched` dipublikasikan<br>• Log per-field delta ke HaispaceLogger[compatibility] | ✅ Done |
 | **PR-03** | **Payment Read Switch** | • SwiftUI Payment View 100% mengonsumsi `HaispaceSession`<br>• Hentikan pembacaan dari `PaymentStore` | ⏳ Pending |
 | **PR-04** | **PaymentStore Cleanup** | • Hapus `PaymentStore.swift`<br>• Refactor tests yang masih mengacu pada `PaymentStore` | ⏳ Pending |
 
