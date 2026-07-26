@@ -21,14 +21,15 @@ Booth beroperasi secara mandiri. Cloud hanya menyediakan sinkronisasi, distribus
 
 Semua data memiliki satu sumber kebenaran. Tidak boleh ada dua sistem yang merasa paling benar untuk data yang sama.
 
-| Data | Source of Truth |
-|------|----------------|
-| Session state | Booth (lokal) |
-| Asset files | Cloud Storage (R2) |
-| Asset metadata | Cloud (manifest) |
-| Package definition | Cloud (synced to Booth) |
-| Operator identity | Cloud (auth service) |
-| Audit trail | Booth → Cloud (upload) |
+| Data | Owner | Source of Truth | Cached By | Conflict Resolution |
+|------|-------|----------------|-----------|---------------------|
+| Session state | Booth Runtime | Booth (lokal) | Cloud (upload) | Booth wins — session sedang berjalan |
+| Asset files | Asset Service | Cloud Storage (R2) | Booth (lokal) | Cloud wins — berdasarkan checksum |
+| Asset metadata | Asset Service | Cloud (manifest) | Booth (lokal) | Cloud wins — berdasarkan version |
+| Package definition | Cloud CMS | Cloud | Booth (synced) | Cloud wins — kecuali Session sedang aktif |
+| Operator identity | Auth Service | Cloud | Booth (session cache) | Cloud wins |
+| Audit trail | Booth Runtime | Booth → Cloud | — | Booth wins — immutable setelah tercatat |
+| Event configuration | Cloud CMS | Cloud | Booth (synced) | Cloud wins — hanya berlaku untuk Session berikutnya |
 
 ---
 
@@ -40,11 +41,25 @@ Cloud dapat mengkonfigurasi Workflow melalui Package dan Manifest, tetapi ekseku
 
 ---
 
-## Principle 4 — Configuration via Manifest
+## Principle 4 — Configuration via Manifest, Not Behavior
 
 Semua konfigurasi datang dari Manifest. Tidak ada *magic value* yang dikodekan langsung di dalam aplikasi.
 
 Ini termasuk: layout, pricing policy, workflow policy, delivery channel, asset list, capability requirements, dan minimum version.
+
+**Manifest mendeskripsikan konfigurasi, bukan perilaku runtime.**
+
+Manifest boleh mengatakan:
+- Gunakan layout A
+- Gunakan theme B
+- Harga Rp50.000
+- Printer wajib tersedia
+
+Manifest **tidak boleh** mengatakan:
+- Jika payment sukses, lanjut ke Capture
+- Jika gagal, ulangi dari step X
+
+Workflow logic tetap sepenuhnya milik Runtime.
 
 ---
 
@@ -54,6 +69,10 @@ Booth harus bisa menghasilkan revenue walaupun internet mati.
 
 Selama Asset dan Manifest sudah tersedia secara lokal dan Operator sudah login, tidak ada alasan teknis yang boleh menghentikan Booth dari melayani tamu dan mencetak foto.
 
+**Cloud outage tidak boleh menjadi alasan event berhenti.**
+
+Ini adalah pegangan seluruh tim engineering. Jika sebuah fitur baru membuat Booth bergantung pada koneksi real-time, fitur tersebut melanggar prinsip ini dan harus didesain ulang.
+
 ---
 
 ## Principle 6 — Assets are Data, Not Code
@@ -61,6 +80,16 @@ Selama Asset dan Manifest sudah tersedia secara lokal dan Operator sudah login, 
 Asset adalah data yang memiliki lifecycle, versi, dan checksum — bukan bagian dari source code aplikasi.
 
 Asset tidak di-bundle ke dalam binary aplikasi. Asset dikelola secara independen melalui Asset Service dan didistribusikan melalui Cloud Storage.
+
+Asset mencakup semua jenis media dan konfigurasi konten:
+- Gambar: Frame, Overlay, Sticker, Border
+- Tipografi: Font
+- Video: Intro, Outro, Countdown, Animation
+- Audio: Background Music, Sound Effect
+- Warna & Visual: LUT Filter, Color Grading Profile
+- Masa depan: AI Prompt, 3D Asset, AR Marker
+
+Setiap jenis Asset mengikuti lifecycle yang sama: Created → Uploaded → Validated → Published → Cached → Expired.
 
 ---
 
@@ -96,6 +125,26 @@ Operator hanya menjalankan event. Jika terjadi masalah teknis, sistem harus mena
 
 ---
 
+## Principle 11 — Immutable Session
+
+Setelah Session dimulai, Package, Asset Version, Layout, Theme, dan Workflow Policy untuk Session tersebut tidak boleh berubah.
+
+Update Manifest, Package, atau Asset dari Cloud hanya berlaku untuk Session berikutnya — tidak pernah menginterupsi Session yang sedang berjalan.
+
+Ini adalah garansi konsistensi bagi tamu: pengalaman yang mereka mulai adalah pengalaman yang mereka selesaikan.
+
+---
+
+## Principle 12 — Everything is Observable
+
+Setiap keputusan penting Runtime menghasilkan Domain Event.
+
+Jika sesuatu terjadi tetapi tidak menghasilkan event, maka bagi platform kejadian itu dianggap tidak pernah terjadi. Tidak ada tindakan yang tersembunyi dari sistem observability.
+
+Ini adalah fondasi untuk: Audit Trail, Analytics, Mission Control, AI Assistant, dan Debugging.
+
+---
+
 ## Violation Protocol
 
 Jika ada keputusan teknis atau produk yang berpotensi melanggar salah satu principle di atas:
@@ -108,4 +157,4 @@ Tidak ada principle yang boleh dilanggar secara diam-diam.
 
 ---
 
-*Haispace Platform Principles v1.0*
+*Haispace Platform Principles v1.1 — revised per Architecture Review*
