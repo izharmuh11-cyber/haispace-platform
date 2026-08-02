@@ -166,7 +166,11 @@ Session berjalan offline
 - Session yang sedang berjalan **tidak boleh** mendapat manifest baru di tengah jalan
 - Wajib online hanya saat: Device Registration + Manifest Fetch pertama
 
-**Dampak ke Runtime:** Zero breaking change. `CoreImageEditingRuntime` tetap menerima `framePNGPath: String`. Yang berubah hanya source-nya (manual disk → `AssetCache`).
+> **Catatan Arsitektur: I-001 AssetManager**
+>
+> Runtime tidak boleh bergantung pada proses ekstraksi manual. Seluruh lifecycle `.hspasset` (download, verifikasi, ekstraksi, cache, cleanup) menjadi tanggung jawab penuh `AssetManager`. `CoreImageEditingRuntime` hanya bertugas menerima folder matang yang berisi `frame.png` dan `template.json`, tanpa perlu mengetahui detail kompresi, jaringan, maupun validasi integritas.
+
+**Dampak ke Runtime:** Zero breaking change. `CoreImageEditingRuntime` tetap menerima `frameRef.assetPath` berupa direktori. Yang berubah hanya source-nya (sideload manual → `AssetManager` cache).
 
 ---
 
