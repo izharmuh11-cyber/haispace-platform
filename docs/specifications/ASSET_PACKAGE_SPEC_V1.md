@@ -7,22 +7,28 @@
 
 ## 1. Definisi Asset Package
 
-**Asset Package** adalah format standar distribusi konten di Haispace Platform. Sebuah aset tidak pernah dikirimkan sebagai file tunggal (misal: hanya `frame.png`), melainkan selalu dibungkus dalam sebuah paket (folder) yang utuh (*self-contained*).
+**Asset Package** adalah format standar distribusi konten di Haispace Platform. Sebuah aset tidak pernah dikirimkan sebagai sekumpulan file lepas (misal: hanya `frame.png`), melainkan selalu dibungkus dalam sebuah paket utuh (*self-contained*).
+
+Secara fisik, Asset Package didistribusikan dalam bentuk file tunggal dengan ekstensi **`.hspasset`**. 
+
+**`.hspasset`** pada dasarnya adalah file arsip ZIP standar tanpa kompresi berlebih (Store), yang di dalamnya berisi struktur folder dan file yang sudah distandardisasi.
 
 Paket ini di-generate oleh **Asset Authoring Platform (A-001)**, didistribusikan oleh **Cloud (C-002)**, dan dikonsumsi oleh **Runtime (I-001)**.
 
 ---
 
-## 2. Struktur Dasar (Berlaku Semua Tipe)
+## 2. Struktur Internal Paket (Berlaku Semua Tipe)
 
-Setiap Asset Package, terlepas dari tipenya, wajib mengikuti struktur folder ini:
+Jika sebuah file `.hspasset` diekstrak, isinya wajib mengikuti struktur ini:
 
 ```
-{assetId}/
+[root_archive]/
     ├── asset-manifest.json    ← WAJIB: Common Metadata (Lihat ASSET_TAXONOMY.md)
     ├── thumbnail.webp         ← WAJIB: Low-res (max 256x256), < 50KB
     └── [file_spesifik_tipe...]
 ```
+
+**Aturan Penting:** Root dari arsip zip tidak boleh berisi folder pembungkus (misalnya folder `wedding-classic/`). File `asset-manifest.json` harus langsung berada di *root level* dari ZIP.
 
 ### Fungsi `thumbnail.webp`
 - **Di Mission Control:** Digunakan untuk daftar/grid aset saat operator merancang *Manifest* untuk suatu Event.
@@ -35,9 +41,9 @@ Setiap Asset Package, terlepas dari tipenya, wajib mengikuti struktur folder ini
 
 Paket dengan `type: "frame"` merupakan template foto.
 
-### Struktur Paket
+### Struktur Ekstraksi
 ```
-wedding-classic/
+wedding-classic.hspasset (saat diekstrak)
     ├── asset-manifest.json
     ├── thumbnail.webp
     ├── frame.png           ← File visual utama
@@ -100,9 +106,18 @@ Dihasilkan secara otomatis oleh *Asset Authoring Platform*. Digunakan oleh `Core
 
 ---
 
-## 4. Siklus Hidup File
+## 4. Siklus Hidup File & Distribusi
 
-1. **Pembuatan:** *Asset Authoring Platform* menghasilkan PNG dan JSON, lalu menggabungkannya dengan foto wajah *dummy* (*stock photo*) untuk merender `preview.jpg`. WebP `thumbnail.webp` di-*generate* untuk grid UI.
-2. **Pengiriman:** Paket di-*zip* (atau di-upload per file) ke Cloud CDN. Cloud Backend mencatat *checksum* total paket.
-3. **Penyimpanan Cache:** Runtime iPad mengunduh `asset-manifest.json`, `frame.png`, `template.json`, dan `thumbnail.webp` ke folder `~/Library/Caches/HaispaceAssets/wedding-classic/`.
+1. **Pembuatan:** *Asset Authoring Platform* menghasilkan PNG dan JSON, merender `preview.jpg`, meng-generate `thumbnail.webp`, dan mem-bundle semuanya ke dalam satu file arsip **`.hspasset`** (ZIP).
+2. **Pengiriman:** File `.hspasset` di-upload ke Cloud CDN. Cloud Backend mencatat *checksum* (SHA-256) dari file tunggal tersebut.
+3. **Penyimpanan Cache:** Runtime iPad mengunduh `wedding-classic.hspasset`, memvalidasi *checksum*, mengekstrak isinya ke folder `~/Library/Caches/HaispaceAssets/wedding-classic/`, dan menghapus file `.hspasset` original untuk menghemat penyimpanan.
 4. **Rendering:** `CoreImageEditingRuntime` mem-parsing `template.json`, memotong (*crop/scale*) foto jepretan tamu sesuai `slots`, dan menumpuknya di bawah `frame.png`.
+
+---
+
+## 5. Keuntungan Format `.hspasset` (Single File)
+
+- **Atomic Download:** Pengunduhan sukses atau gagal secara utuh. Tidak ada risiko file hilang setengah (misalnya `template.json` terunduh tetapi `frame.png` gagal).
+- **Single Checksum:** Verifikasi integritas jauh lebih mudah karena yang dicek hanya satu file ZIP, bukan melakukan traversal folder.
+- **Distribusi Lebih Cepat:** Mengunduh 1 file ZIP lebih cepat dan stabil daripada membuka 5 koneksi HTTP paralel.
+- **Portable:** Aset bisa dengan mudah dikirim via AirDrop untuk *debugging* lokal di iPad tanpa perlu terkoneksi ke Cloud.
